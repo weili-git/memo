@@ -229,7 +229,7 @@ Usage: list [OPTIONS]
   end
 
   def display_words(words)
-    max_len = words.max_by { |k| k[0].length }.length
+    max_len = words.map{ |k| k[0].length }.max
     words.each do |k, v|
       padding = "  " * [0, max_len - k.length].max
       puts "#{k}#{padding} - #{v[:meaning]}"
