@@ -27,6 +27,8 @@ Usage: list [OPTIONS]
     @words = load_words(WORDS_FILE)
     @bin_words = load_words(BIN_FILE)
     @impt_words = load_words(IMPT_FILE)
+    @history = []
+    @redo_history = []
   end
 
   def load_words(file_path)
@@ -85,35 +87,11 @@ Usage: list [OPTIONS]
   end
 
   def new(options)
-    if !(options[:word] && options[:meaning])
-      puts USAGE_DICT["new"]
-      return
-    end
-    word = options[:word]
-    if @words.key?(word)
-      puts "Word #{word} already exists with meaning: #{@words[word][:meaning]}"
-    else
-      @words[word] = { meaning: options[:meaning], timestamp: Time.now }
-      file_do(:push, WORDS_FILE, word)
-      puts "Added: #{word} - #{options[:meaning]}"
-    end
+    move_and_log("add", nil, @words, options)
   end
 
   def remove(options)
-    if !options[:word]
-      puts USAGE_DICT["remove"]
-      return
-    end
-    word = options[:word]
-    if options[:cancel]
-      if move(word, @bin_words, @words)
-        puts "Restored: #{word} - #{@words[word][:meaning]}"
-      end
-    else
-      if move(word, @words, @bin_words)
-        puts "Removed: #{word} - #{@bin_words[word][:meaning]}"
-      end
-    end
+    move_and_log("remove", @words, @bin_words, options)
   end
 
   def update(options)
@@ -121,10 +99,13 @@ Usage: list [OPTIONS]
       puts USAGE_DICT["update"]
       return
     end
-    word = options[:word]
-    if move(word, @words, @bin_words)
-      @words[word] = { meaning: options[:meaning], timestamp: Time.now }
-      puts "Updated: #{word} - #{options[:meaning]}"
+
+    if options[:cancel]
+      @words.delete(options[:word])
+    end
+    move_and_log("update", @words, @bin_words, options)
+    if !options[:cancel]
+      @words[options[:word]] = { meaning: options[:meaning], timestamp: Time.now }
     end
   end
 
@@ -155,20 +136,7 @@ Usage: list [OPTIONS]
   end
 
   def mark(options)
-    if !options[:word]
-      puts USAGE_DICT["mark"]
-      return
-    end
-    word = options[:word]
-    if options[:cancel]
-      if move(word, @impt_words, @words)
-        puts "Unmarked #{word} as important."
-      end
-    else
-      if move(word, @words, @impt_words)
-        puts "Marked #{word} as important."
-      end
-    end
+    move_and_log("mark", @words, @impt_words, options)
   end
 
   def help(options)
@@ -187,19 +155,74 @@ Usage: list [OPTIONS]
     exit
   end
 
+  def undo(options)
+    return if @history.empty?
+    last_command = @history.pop
+    redo_command = {command: last_command[:command].dup, options: last_command[:options].dup} # deep copy
+    @redo_history.push(redo_command.dup)
+    last_command[:options][:cancel] = !last_command[:options][:cancel]
+    send(last_command[:command], last_command[:options])
+    @history.pop if @history.last == last_command # remove duplicate history
+  end
+
+  def redo(options)
+    return if @redo_history.empty?
+    last_undo = @redo_history.pop
+    puts last_undo
+    send(last_undo[:command], last_undo[:options])
+  end
+
   private
 
-  def move(word, from, to)
-    if from.key?(word)
-      to[word] = from[word]
-      from.delete(word)
-      file_do(:push, to == @words ? WORDS_FILE : to == @bin_words ? BIN_FILE : IMPT_FILE, word)
-      file_do(:overwrite, from == @words ? WORDS_FILE : from == @bin_words ? BIN_FILE : IMPT_FILE)
-      return true
+  def move_and_log(command, from, to, options)
+    # remove, mark, update
+    if !options[:word]
+      USAGE_DICT[command]
+      return
+    end
+
+    word = options[:word]
+    if !options[:cancel]
+      if move(word, from, to, options)
+        puts "Applied #{command}: #{word} - #{to[word][:meaning]}"
+      end
     else
+      if move(word, to, from, options)
+        puts "Restored #{command}: #{word} - #{from[word][:meaning]}"
+      end
+    end
+    @history.push({command: command, options: options.dup})
+    # @redo_history.clear
+  end
+
+  def move(word, from, to, options)
+    if !from.nil? && !from.key?(word)
       puts "Word not found in #{from == @words ? "words" : from == @bin_words ? "bin" : "important"}: #{word}"
       return false
     end
+    if !to.nil? && to.key?(word)
+      puts "Word #{word} already exists in #{to == @words ? "words" : to == @bin_words ? "bin" : "important"} with meaning #{to[word][:meaning]}"
+      return false
+    end
+
+    if !(from.nil? || to.nil?) # remove, mark, update
+      to[word] = from[word]
+      from.delete(word)
+    elsif from.nil? # add
+      if options[:meaning].nil?
+        puts USAGE_DICT["new"]
+        return false
+      end
+      to[word] = { meaning: options[:meaning], timestamp: Time.now }
+    elsif to.nil? # cancel add
+      from.delete(word)
+    else
+      puts "Tried to move from nil to nil"
+      return false
+    end
+    file_do(:push, to == @words ? WORDS_FILE : to == @bin_words ? BIN_FILE : IMPT_FILE, word) if !to.nil?
+    file_do(:overwrite, from == @words ? WORDS_FILE : from == @bin_words ? BIN_FILE : IMPT_FILE) if !from.nil?
+    return true
   end
 
   def file_do(operation, file_path, word = nil)
@@ -229,7 +252,7 @@ Usage: list [OPTIONS]
   end
 
   def display_words(words)
-    max_len = words.map{ |k| k[0].length }.max
+    max_len = words.map { |k| k[0].length }.max
     words.each do |k, v|
       padding = "  " * [0, max_len - k.length].max
       puts "#{k}#{padding} - #{v[:meaning]}"

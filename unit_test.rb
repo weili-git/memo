@@ -37,20 +37,20 @@ RSpec.describe WordBook do
   describe '#new' do
     it 'adds a new word with its meaning' do
       options = { word: 'goodbye', meaning: 'farewell' }
-      expect { @word_book.new(options) }.to output("Added: goodbye - farewell\n").to_stdout
+      expect { @word_book.new(options) }.to output("Applied add: goodbye - farewell\n").to_stdout
       expect(@word_book.instance_variable_get(:@words).keys).to include('goodbye')
     end
 
     it 'does not add a word if it already exists' do
       options = { word: 'hello', meaning: 'greeting' }
-      expect { @word_book.new(options) }.to output("Word hello already exists with meaning: world\n").to_stdout
+      expect { @word_book.new(options) }.to output("Word hello already exists in words with meaning world\n").to_stdout
     end
   end
 
   describe '#remove' do
     it 'removes a word and moves it to the bin' do
       options = { word: 'hello' }
-      expect { @word_book.remove(options) }.to output("Removed: hello - world\n").to_stdout
+      expect { @word_book.remove(options) }.to output("Applied remove: hello - world\n").to_stdout
       expect(@word_book.instance_variable_get(:@words).keys).not_to include('hello')
       expect(@word_book.instance_variable_get(:@bin_words).keys).to include('hello')
     end
@@ -59,7 +59,7 @@ RSpec.describe WordBook do
       options = { word: 'hello' }
       @word_book.remove(options)
       restore_options = { word: 'hello', cancel: true }
-      expect { @word_book.remove(restore_options) }.to output("Restored: hello - world\n").to_stdout
+      expect { @word_book.remove(restore_options) }.to output("Restored remove: hello - world\n").to_stdout
       expect(@word_book.instance_variable_get(:@words).keys).to include('hello')
       expect(@word_book.instance_variable_get(:@bin_words).keys).not_to include('hello')
     end
@@ -68,7 +68,7 @@ RSpec.describe WordBook do
   describe '#update' do
     it 'updates the meaning of a word and moves the old one to the bin' do
       options = { word: 'hello', meaning: 'greeting' }
-      expect { @word_book.update(options) }.to output("Updated: hello - greeting\n").to_stdout
+      expect { @word_book.update(options) }.to output("Applied update: hello - world\n").to_stdout # print old meaning - move_and_log()
       expect(@word_book.instance_variable_get(:@words)['hello'][:meaning]).to eq('greeting')
       expect(@word_book.instance_variable_get(:@bin_words).keys).to include('hello')
     end
@@ -77,7 +77,7 @@ RSpec.describe WordBook do
   describe '#mark' do
     it 'marks a word as important' do
       options = { word: 'hello' }
-      expect { @word_book.mark(options) }.to output("Marked hello as important.\n").to_stdout
+      expect { @word_book.mark(options) }.to output("Applied mark: hello - world\n").to_stdout
       expect(@word_book.instance_variable_get(:@impt_words).keys).to include('hello')
       expect(@word_book.instance_variable_get(:@words).keys).not_to include('hello')
     end
@@ -86,7 +86,7 @@ RSpec.describe WordBook do
       options = { word: 'hello' }
       @word_book.mark(options)
       unmark_options = { word: 'hello', cancel: true }
-      expect { @word_book.mark(unmark_options) }.to output("Unmarked hello as important.\n").to_stdout
+      expect { @word_book.mark(unmark_options) }.to output("Restored mark: hello - world\n").to_stdout
       expect(@word_book.instance_variable_get(:@impt_words).keys).not_to include('hello')
       expect(@word_book.instance_variable_get(:@words).keys).to include('hello')
     end
