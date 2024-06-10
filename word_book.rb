@@ -17,7 +17,7 @@ Usage: list [OPTIONS]
   Options:
     N|-a   - Number of words / All of the words
     -r     - Random order
-    -f     - From bin, word or impt
+    -f     - From bin, words or impt
   EOF
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
@@ -31,18 +31,6 @@ Usage: list [OPTIONS]
     @redo_history = []
   end
 
-  def load_words(file_path)
-    return {} unless File.exist?(file_path)
-    dict = {}
-    File.open(file_path, "r:UTF-8") do |file|
-      file.each_line do |line|
-        word, meaning, timestamp = line.chomp.split(DELIMITER)
-        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp) }
-      end
-    end
-    dict
-  end
-
   def method_missing(name, args)
     puts "Unknown command #{name} - #{args}. Type 'help' for a list of commands."
   end
@@ -54,7 +42,7 @@ Usage: list [OPTIONS]
       count: nil,
       random: false,
       all: false,
-      from: "word",
+      from: "words",
       cancel: false,
     }
 
@@ -87,7 +75,7 @@ Usage: list [OPTIONS]
   end
 
   def new(options)
-    move_and_log("add", nil, @words, options)
+    move_and_log("new", nil, @words, options)
   end
 
   def remove(options)
@@ -115,7 +103,7 @@ Usage: list [OPTIONS]
       return
     end
     words = case options[:from]
-      when "word"
+      when "words"
         @words
       when "bin"
         @bin_words
@@ -158,8 +146,10 @@ Usage: list [OPTIONS]
   def undo(options)
     return if @history.empty?
     last_command = @history.pop
-    redo_command = {command: last_command[:command].dup, options: last_command[:options].dup} # deep copy
-    @redo_history.push(redo_command.dup)
+    @redo_history.push({
+      command: last_command[:command].dup, 
+      options: last_command[:options].dup
+    })
     last_command[:options][:cancel] = !last_command[:options][:cancel]
     send(last_command[:command], last_command[:options])
     @history.pop if @history.last == last_command # remove duplicate history
@@ -168,7 +158,6 @@ Usage: list [OPTIONS]
   def redo(options)
     return if @redo_history.empty?
     last_undo = @redo_history.pop
-    puts last_undo
     send(last_undo[:command], last_undo[:options])
   end
 
@@ -183,19 +172,24 @@ Usage: list [OPTIONS]
 
     word = options[:word]
     if !options[:cancel]
-      if move(word, from, to, options)
+      if move(from, to, options)
         puts "Applied #{command}: #{word} - #{to[word][:meaning]}"
       end
     else
-      if move(word, to, from, options)
-        puts "Restored #{command}: #{word} - #{from[word][:meaning]}"
+      if move(to, from, options)
+        if !from.nil?
+          puts "Restored #{command}: #{word} - #{from[word][:meaning]}"
+        else
+          puts "Restored #{command}: #{word} - #{options[:meaning]}" # add -c word meaning / undo
+        end
       end
     end
     @history.push({command: command, options: options.dup})
     # @redo_history.clear
   end
 
-  def move(word, from, to, options)
+  def move(from, to, options)
+    word = options[:word]
     if !from.nil? && !from.key?(word)
       puts "Word not found in #{from == @words ? "words" : from == @bin_words ? "bin" : "important"}: #{word}"
       return false
@@ -249,6 +243,18 @@ Usage: list [OPTIONS]
         end
       end
     end
+  end
+
+  def load_words(file_path)
+    return {} unless File.exist?(file_path)
+    dict = {}
+    File.open(file_path, "r:UTF-8") do |file|
+      file.each_line do |line|
+        word, meaning, timestamp = line.chomp.split(DELIMITER)
+        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp) }
+      end
+    end
+    dict
   end
 
   def display_words(words)
