@@ -95,12 +95,12 @@ RSpec.describe WordBook do
   describe '#list' do
     it 'lists all words if -a option is given' do
       options = { all: true, from: 'words' }
-      expect { @word_book.list(options) }.to output(/hi\s+- there\nhello\s+- world\n/).to_stdout # 注意顺序
+      expect { @word_book.list(options) }.to output(/hi\s+- there - 1 day\nhello\s+- world - 1 day\n/).to_stdout # 注意顺序
     end
 
     it 'lists a specified number of words' do
       options = { count: 1, from: 'words' }
-      expect { @word_book.list(options) }.to output(/hi\s+- there\n/).to_stdout
+      expect { @word_book.list(options) }.to output(/hi\s+- there - 1 day\n/).to_stdout
     end
   end
 

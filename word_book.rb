@@ -19,6 +19,8 @@ Usage: list [OPTIONS]
     -r     - Random order
     -f     - From bin, words or impt
   EOF
+    "undo" => "Usage: undo - Undo last command",
+    "redo" => "Usage: redo - Redo last undo command",
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
   }
@@ -29,6 +31,13 @@ Usage: list [OPTIONS]
     @impt_words = load_words(IMPT_FILE)
     @history = []
     @redo_history = []
+    @last_listed_words = []
+  end
+
+  def handle(input)
+    command, *args = input.split(" ")
+    options = parse_list_args(args)
+    send(command.downcase, options)
   end
 
   def method_missing(name, args)
@@ -88,11 +97,16 @@ Usage: list [OPTIONS]
       return
     end
 
-    if options[:cancel]
+    if options[:cancel] # undo new meaning
       @words.delete(options[:word])
     end
+    # if !options[:cancel] && !@bin_words[options[:word]].nil? # overwrite, cannot undo!
+    #   @bin_words.delete(options[:word])
+    # end
+    # update 旧数据丢入bin
+    # bin 如果已存在将会覆盖，并且无法用undo复原！
     move_and_log("update", @words, @bin_words, options)
-    if !options[:cancel]
+    if !options[:cancel] # new meaning
       @words[options[:word]] = { meaning: options[:meaning], timestamp: Time.now }
     end
   end
@@ -120,6 +134,7 @@ Usage: list [OPTIONS]
         words = words.first(options[:count])
       end
     end
+    @last_listed_words = words.map {|k| k[0]}
     display_words(words)
   end
 
@@ -147,8 +162,8 @@ Usage: list [OPTIONS]
     return if @history.empty?
     last_command = @history.pop
     @redo_history.push({
-      command: last_command[:command].dup, 
-      options: last_command[:options].dup
+      command: last_command[:command].dup,
+      options: last_command[:options].dup,
     })
     last_command[:options][:cancel] = !last_command[:options][:cancel]
     send(last_command[:command], last_command[:options])
@@ -159,6 +174,32 @@ Usage: list [OPTIONS]
     return if @redo_history.empty?
     last_undo = @redo_history.pop
     send(last_undo[:command], last_undo[:options])
+  end
+
+  def review(options)
+    if !options[:word].nil? ^ options[:from].nil?
+      puts USAGE_DICT["review"]
+      return
+    end
+    if options[:from].nil?
+      words = [options[:word]]
+    elsif options[:from] == "list"
+      words = @last_listed_words 
+    else
+      puts "Unkown argument: -f #{options[:from]}"
+      return
+    end
+    words.each do |word|
+      if @words.key?(word)
+        @words[word][:review] += options[:cancel] ? -1 : 1
+        @words[word][:review] = @words[word][:review] < 0 ? 0 : @words[word][:review]
+        puts "Reviewed: #{word}, total reviews: #{@words[word][:review]}"
+      else
+        puts "Word not found: #{word}"
+      end
+    end
+    file_do(:overwrite, WORDS_FILE)
+    @history.push({command: "review", options: options.dup})
   end
 
   private
@@ -184,8 +225,7 @@ Usage: list [OPTIONS]
         end
       end
     end
-    @history.push({command: command, options: options.dup})
-    # @redo_history.clear
+    @history.push({ command: command, options: options.dup })
   end
 
   def move(from, to, options)
@@ -202,13 +242,13 @@ Usage: list [OPTIONS]
     if !(from.nil? || to.nil?) # remove, mark, update
       to[word] = from[word]
       from.delete(word)
-    elsif from.nil? # add
+    elsif from.nil? # new
       if options[:meaning].nil?
         puts USAGE_DICT["new"]
         return false
       end
-      to[word] = { meaning: options[:meaning], timestamp: Time.now }
-    elsif to.nil? # cancel add
+      to[word] = { meaning: options[:meaning], timestamp: Time.now, review: 0 }
+    elsif to.nil? # new -c
       from.delete(word)
     else
       puts "Tried to move from nil to nil"
@@ -234,12 +274,12 @@ Usage: list [OPTIONS]
     case operation
     when :push
       File.open(file_path, "a:UTF-8") do |file|
-        file.puts([word, words[word][:meaning], words[word][:timestamp]].join(DELIMITER))
+        file.puts([word, words[word][:meaning], words[word][:timestamp], words[word][:review]].join(DELIMITER))
       end
     when :overwrite
       File.open(file_path, "w:UTF-8") do |file|
         words.each do |k, v|
-          file.puts([k, v[:meaning], v[:timestamp]].join(DELIMITER))
+          file.puts([k, v[:meaning], v[:timestamp], v[:review]].join(DELIMITER))
         end
       end
     end
@@ -250,8 +290,8 @@ Usage: list [OPTIONS]
     dict = {}
     File.open(file_path, "r:UTF-8") do |file|
       file.each_line do |line|
-        word, meaning, timestamp = line.chomp.split(DELIMITER)
-        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp) }
+        word, meaning, timestamp, review = line.chomp.split(DELIMITER)
+        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp), review: review.to_i }
       end
     end
     dict
@@ -261,7 +301,10 @@ Usage: list [OPTIONS]
     max_len = words.map { |k| k[0].length }.max
     words.each do |k, v|
       padding = "  " * [0, max_len - k.length].max
-      puts "#{k}#{padding} - #{v[:meaning]}"
+      days_until_review = (2 ** v[:review]) - ((Time.now - v[:timestamp]) / 86400).to_i
+      days_until_review = days_until_review < 0 ? 0 : days_until_review
+      days_text = days_until_review <= 1 ? "day" : "days"
+      puts "#{k}#{padding} - #{v[:meaning]} - #{days_until_review} #{days_text}"
     end
   end
 end
