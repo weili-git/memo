@@ -12,11 +12,13 @@ class WordBook
     "remove" => "Usage: remove WORD - Remove a word to bin",
     "update" => "Usage: update WORD NEW_MEANING - Update the meaning of a word and remove the old one to bin",
     "mark" => "Usage: mark WORD - Mark a word as important",
+    "review" => "Usage: review WORD - increase times of review of word",
     "list" => <<-EOF,
 Usage: list [OPTIONS]
   Options:
     N|-a   - Number of words / All of the words
     -r     - Random order
+    -v     - List review words
     -f     - From bin, words or impt
   EOF
     "undo" => "Usage: undo - Undo last command",
@@ -48,10 +50,14 @@ Usage: list [OPTIONS]
     options = {
       word: nil,
       meaning: nil,
+
       count: nil,
-      random: false,
       all: false,
-      from: "words",
+
+      random: false,
+      review: false,
+
+      from: nil,
       cancel: false,
     }
 
@@ -61,6 +67,8 @@ Usage: list [OPTIONS]
       case arg
       when "-r"
         options[:random] = true
+      when "-v"
+        options[:review] = true
       when "-a"
         options[:all] = true
       when "-f"
@@ -117,7 +125,7 @@ Usage: list [OPTIONS]
       return
     end
     words = case options[:from]
-      when "words"
+      when nil
         @words
       when "bin"
         @bin_words
@@ -126,7 +134,12 @@ Usage: list [OPTIONS]
       else
         raise "Unknown file path: #{options[:from]}"
       end
+    words = words.filter { |k, v| get_days_until_review(v) <= 0 } if options[:review]
     if options[:random]
+      if options[:count].nil?
+        puts USAGE_DICT["list"]
+        return
+      end
       words = words.to_a.sample(options[:count])
     else
       words = words.sort_by { |k, v| -v[:timestamp].to_i } # not :count for :all
@@ -134,7 +147,7 @@ Usage: list [OPTIONS]
         words = words.first(options[:count])
       end
     end
-    @last_listed_words = words.map {|k| k[0]}
+    @last_listed_words = words.map { |k| k[0] }
     display_words(words)
   end
 
@@ -184,7 +197,7 @@ Usage: list [OPTIONS]
     if options[:from].nil?
       words = [options[:word]]
     elsif options[:from] == "list"
-      words = @last_listed_words 
+      words = @last_listed_words
     else
       puts "Unkown argument: -f #{options[:from]}"
       return
@@ -199,7 +212,7 @@ Usage: list [OPTIONS]
       end
     end
     file_do(:overwrite, WORDS_FILE)
-    @history.push({command: "review", options: options.dup})
+    @history.push({ command: "review", options: options.dup })
   end
 
   private
@@ -301,10 +314,14 @@ Usage: list [OPTIONS]
     max_len = words.map { |k| k[0].length }.max
     words.each do |k, v|
       padding = "  " * [0, max_len - k.length].max
-      days_until_review = (2 ** v[:review]) - ((Time.now - v[:timestamp]) / 86400).to_i
+      days_until_review = get_days_until_review(v)
       days_until_review = days_until_review < 0 ? 0 : days_until_review
       days_text = days_until_review <= 1 ? "day" : "days"
       puts "#{k}#{padding} - #{v[:meaning]} - #{days_until_review} #{days_text}"
     end
+  end
+
+  def get_days_until_review(v)
+    return (2 ** v[:review]) - ((Time.now - v[:timestamp]) / 86400).to_i
   end
 end
