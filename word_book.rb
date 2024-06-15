@@ -7,12 +7,14 @@ class WordBook
   BIN_FILE = "bin.txt"
   IMPT_FILE = "impt.txt"
   DELIMITER = "|"
+  SHORT_TERM_REVIEW_THRESHOLD = 24 * 60 * 60  # 24 hours in seconds
+
   USAGE_DICT = {
     "new" => "Usage: new WORD MEANING - Add a new word with its meaning",
     "remove" => "Usage: remove WORD - Remove a word to bin",
     "update" => "Usage: update WORD NEW_MEANING - Update the meaning of a word and remove the old one to bin",
     "mark" => "Usage: mark WORD - Mark a word as important",
-    "review" => "Usage: review WORD - increase times of review of word",
+    "review" => "Usage: review WORD|-f list - increase reviews for given word or last listed ones",
     "list" => <<-EOF,
 Usage: list [OPTIONS]
   Options:
@@ -68,6 +70,9 @@ Usage: list [OPTIONS]
       when "-r"
         options[:random] = true
       when "-v"
+        options[:review] = true
+      when "-rv" # short
+        options[:random] = true
         options[:review] = true
       when "-a"
         options[:all] = true
@@ -134,18 +139,15 @@ Usage: list [OPTIONS]
       else
         raise "Unknown file path: #{options[:from]}"
       end
-    words = words.filter { |k, v| get_days_until_review(v) <= 0 } if options[:review]
+    words = words.filter {
+      |k, v|
+      get_days_until_review(v) <= 0 && (Time.now - v[:last_review]) > SHORT_TERM_REVIEW_THRESHOLD
+    } if options[:review]
     if options[:random]
-      if options[:count].nil?
-        puts USAGE_DICT["list"]
-        return
-      end
       words = words.to_a.sample(options[:count])
     else
-      words = words.sort_by { |k, v| -v[:timestamp].to_i } # not :count for :all
-      if options[:count]
-        words = words.first(options[:count])
-      end
+      words = words.sort_by { |k, v| -v[:timestamp].to_i }
+      words = words.first(options[:count]) if options[:count]
     end
     @last_listed_words = words.map { |k| k[0] }
     display_words(words)
@@ -206,6 +208,7 @@ Usage: list [OPTIONS]
       if @words.key?(word)
         @words[word][:review] += options[:cancel] ? -1 : 1
         @words[word][:review] = @words[word][:review] < 0 ? 0 : @words[word][:review]
+        @words[word][:last_review] = Time.now
         puts "Reviewed: #{word}, total reviews: #{@words[word][:review]}"
       else
         puts "Word not found: #{word}"
@@ -218,24 +221,18 @@ Usage: list [OPTIONS]
   private
 
   def move_and_log(command, from, to, options)
-    # remove, mark, update
     if !options[:word]
       USAGE_DICT[command]
       return
     end
 
     word = options[:word]
-    if !options[:cancel]
-      if move(from, to, options)
-        puts "Applied #{command}: #{word} - #{to[word][:meaning]}"
-      end
-    else
-      if move(to, from, options)
-        if !from.nil?
-          puts "Restored #{command}: #{word} - #{from[word][:meaning]}"
-        else
-          puts "Restored #{command}: #{word} - #{options[:meaning]}" # add -c word meaning / undo
-        end
+    action, from, to = options[:cancel] ? ["Restored", to, from] : ["Applied", from, to]
+    if move(from, to, options)
+      if options[:cancel] && to.nil? # add -c
+        puts "#{action} #{command}: #{word} - #{options[:meaning]}"
+      else
+        puts "#{action} #{command}: #{word} - #{to[word][:meaning]}"
       end
     end
     @history.push({ command: command, options: options.dup })
@@ -260,7 +257,7 @@ Usage: list [OPTIONS]
         puts USAGE_DICT["new"]
         return false
       end
-      to[word] = { meaning: options[:meaning], timestamp: Time.now, review: 0 }
+      to[word] = { meaning: options[:meaning], timestamp: Time.now, last_review: Time.now, review: 0 }
     elsif to.nil? # new -c
       from.delete(word)
     else
@@ -287,12 +284,12 @@ Usage: list [OPTIONS]
     case operation
     when :push
       File.open(file_path, "a:UTF-8") do |file|
-        file.puts([word, words[word][:meaning], words[word][:timestamp], words[word][:review]].join(DELIMITER))
+        file.puts([word, words[word][:meaning], words[word][:timestamp], words[word][:last_review], words[word][:review]].join(DELIMITER))
       end
     when :overwrite
       File.open(file_path, "w:UTF-8") do |file|
         words.each do |k, v|
-          file.puts([k, v[:meaning], v[:timestamp], v[:review]].join(DELIMITER))
+          file.puts([k, v[:meaning], v[:timestamp], v[:last_review], v[:review]].join(DELIMITER))
         end
       end
     end
@@ -303,8 +300,8 @@ Usage: list [OPTIONS]
     dict = {}
     File.open(file_path, "r:UTF-8") do |file|
       file.each_line do |line|
-        word, meaning, timestamp, review = line.chomp.split(DELIMITER)
-        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp), review: review.to_i }
+        word, meaning, timestamp, last_review, review = line.chomp.split(DELIMITER)
+        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp), last_review: Time.parse(last_review), review: review.to_i }
       end
     end
     dict

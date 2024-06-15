@@ -8,7 +8,7 @@ RSpec.describe WordBook do
     @words_file = "spec/words_test.txt"
     @bin_file = "spec/bin_test.txt"
     @impt_file = "spec/impt_test.txt"
-    File.write(@words_file, "hello|world|#{Time.now.iso8601}\nhi|there|#{Time.now.iso8601}\n")
+    File.write(@words_file, "hello|world|#{Time.now.iso8601}|#{Time.now.iso8601}|0\nhi|there|#{Time.now.iso8601}|#{Time.now.iso8601}|0\n")
     File.write(@bin_file, "")
     File.write(@impt_file, "")
 
