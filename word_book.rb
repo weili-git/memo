@@ -11,6 +11,7 @@ class WordBook
 
   USAGE_DICT = {
     "new" => "Usage: new WORD MEANING - Add a new word with its meaning",
+    "find" => "Usage: find PREFIX - Search word by prefix",
     "remove" => "Usage: remove WORD - Remove a word to bin",
     "update" => "Usage: update WORD NEW_MEANING - Update the meaning of a word and remove the old one to bin",
     "mark" => "Usage: mark WORD - Mark a word as important",
@@ -38,18 +39,18 @@ Usage: list [OPTIONS]
     @last_listed_words = []
   end
 
-  def handle(input)
-    command, *args = input.split(" ")
-    options = parse_list_args(args)
-    send(command.downcase, options)
-  end
-
   def method_missing(name, args)
     puts "Unknown command #{name} - #{args}. Type 'help' for a list of commands."
   end
 
-  def parse_list_args(args)
+  def handle(input)
+    command, *args = input.split(" ")
+    if !USAGE_DICT.key?(command.downcase)
+      puts "Command #{command.downcase} not found."
+      return
+    end
     options = {
+      command: command,
       word: nil,
       meaning: nil,
 
@@ -90,18 +91,28 @@ Usage: list [OPTIONS]
           break
         end
       end
-      i += 1
+      i+=1
     end
+    send(command.downcase, options)
+  end
 
-    return options
+  def find(options)
+    if !options[:word]
+      puts USAGE_DICT[options[:command]]
+      return
+    end
+    prefix = options[:word]
+    words = from_to_words(options[:from])
+    words.select! { |k, v| k.start_with?(prefix) }
+    display_words(words)
   end
 
   def new(options)
-    move_and_log("new", nil, @words, options)
+    move_and_log(nil, @words, options)
   end
 
   def remove(options)
-    move_and_log("remove", @words, @bin_words, options)
+    move_and_log(@words, @bin_words, options)
   end
 
   def update(options)
@@ -118,9 +129,9 @@ Usage: list [OPTIONS]
     # end
     # update 旧数据丢入bin
     # bin 如果已存在将会覆盖，并且无法用undo复原！
-    move_and_log("update", @words, @bin_words, options)
+    move_and_log(@words, @bin_words, options)
     if !options[:cancel] # new meaning
-      @words[options[:word]] = { meaning: options[:meaning], timestamp: Time.now }
+      @words[options[:word]] = { meaning: options[:meaning], timestamp: Time.now, last_review: Time.now, review: @bin_words[options[:word]][:review] }
     end
   end
 
@@ -129,16 +140,7 @@ Usage: list [OPTIONS]
       puts USAGE_DICT["list"]
       return
     end
-    words = case options[:from]
-      when nil
-        @words
-      when "bin"
-        @bin_words
-      when "impt"
-        @impt_words
-      else
-        raise "Unknown file path: #{options[:from]}"
-      end
+    words = from_to_words(options[:from])
     words = words.filter {
       |k, v|
       get_days_until_review(v) <= 0 && (Time.now - v[:last_review]) > SHORT_TERM_REVIEW_THRESHOLD
@@ -154,7 +156,7 @@ Usage: list [OPTIONS]
   end
 
   def mark(options)
-    move_and_log("mark", @words, @impt_words, options)
+    move_and_log(@words, @impt_words, options)
   end
 
   def help(options)
@@ -176,19 +178,16 @@ Usage: list [OPTIONS]
   def undo(options)
     return if @history.empty?
     last_command = @history.pop
-    @redo_history.push({
-      command: last_command[:command].dup,
-      options: last_command[:options].dup,
-    })
-    last_command[:options][:cancel] = !last_command[:options][:cancel]
-    send(last_command[:command], last_command[:options])
+    @redo_history.push( last_command.dup )
+    last_command[:cancel] = !last_command[:cancel]
+    send(last_command[:command], last_command)
     @history.pop if @history.last == last_command # remove duplicate history
   end
 
   def redo(options)
     return if @redo_history.empty?
     last_undo = @redo_history.pop
-    send(last_undo[:command], last_undo[:options])
+    send(last_undo[:command], last_undo)
   end
 
   def review(options)
@@ -199,7 +198,9 @@ Usage: list [OPTIONS]
     if options[:from].nil?
       words = [options[:word]]
     elsif options[:from] == "list"
+      return if @last_listed_words.nil?
       words = @last_listed_words
+      @last_listed_words = nil
     else
       puts "Unkown argument: -f #{options[:from]}"
       return
@@ -215,18 +216,19 @@ Usage: list [OPTIONS]
       end
     end
     file_do(:overwrite, WORDS_FILE)
-    @history.push({ command: "review", options: options.dup })
+    @history.push(options: options.dup)
   end
 
   private
 
-  def move_and_log(command, from, to, options)
+  def move_and_log(from, to, options)
+    command = options[:command]
     if !options[:word]
-      USAGE_DICT[command]
+      puts USAGE_DICT[options[:command]]
       return
     end
-
     word = options[:word]
+
     action, from, to = options[:cancel] ? ["Restored", to, from] : ["Applied", from, to]
     if move(from, to, options)
       if options[:cancel] && to.nil? # add -c
@@ -235,7 +237,7 @@ Usage: list [OPTIONS]
         puts "#{action} #{command}: #{word} - #{to[word][:meaning]}"
       end
     end
-    @history.push({ command: command, options: options.dup })
+    @history.push(options.dup)
   end
 
   def move(from, to, options)
@@ -308,6 +310,9 @@ Usage: list [OPTIONS]
   end
 
   def display_words(words)
+    if words.nil?
+      return
+    end
     max_len = words.map { |k| k[0].length }.max
     words.each do |k, v|
       padding = "  " * [0, max_len - k.length].max
@@ -321,4 +326,19 @@ Usage: list [OPTIONS]
   def get_days_until_review(v)
     return (2 ** v[:review]) - ((Time.now - v[:timestamp]) / 86400).to_i
   end
+
+  def from_to_words(from)
+    words = case from
+      when nil
+        @words
+      when "bin"
+        @bin_words
+      when "impt"
+        @impt_words
+      else
+        raise "Unknown file path: #{from}"
+      end
+    return words
+  end
+
 end
