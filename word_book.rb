@@ -91,7 +91,7 @@ Usage: list [OPTIONS]
           break
         end
       end
-      i+=1
+      i += 1
     end
     send(command.downcase, options)
   end
@@ -103,8 +103,13 @@ Usage: list [OPTIONS]
     end
     prefix = options[:word]
     words = from_to_words(options[:from])
-    words.select! { |k, v| k.start_with?(prefix) }
-    display_words(words)
+    words.select! { |k, v| k.include?(prefix) or v[:meaning].include?(prefix) }
+    if words.empty?
+      puts "No result."
+      puts words
+    else
+      display_words(words)
+    end
   end
 
   def new(options)
@@ -178,7 +183,7 @@ Usage: list [OPTIONS]
   def undo(options)
     return if @history.empty?
     last_command = @history.pop
-    @redo_history.push( last_command.dup )
+    @redo_history.push(last_command.dup)
     last_command[:cancel] = !last_command[:cancel]
     send(last_command[:command], last_command)
     @history.pop if @history.last == last_command # remove duplicate history
@@ -338,7 +343,6 @@ Usage: list [OPTIONS]
       else
         raise "Unknown file path: #{from}"
       end
-    return words
+    return words.dup
   end
-
 end
