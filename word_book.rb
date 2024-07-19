@@ -1,67 +1,47 @@
 # encoding: UTF-8
 
 require "time"
+require_relative "db/db_config"
+require_relative "db/model"
 
 class WordBook
-  WORDS_FILE = "words.txt"
-  BIN_FILE = "bin.txt"
-  IMPT_FILE = "impt.txt"
-  DELIMITER = "|"
-  SHORT_TERM_REVIEW_THRESHOLD = 24 * 60 * 60  # 24 hours in seconds
-
   USAGE_DICT = {
-    "new" => "Usage: new WORD MEANING - Add a new word with its meaning",
-    "find" => "Usage: find PREFIX - Search word by prefix",
-    "remove" => "Usage: remove WORD - Remove a word to bin",
-    "update" => "Usage: update WORD NEW_MEANING - Update the meaning of a word and remove the old one to bin",
-    "mark" => "Usage: mark WORD - Mark a word as important",
+    "create" => "Usage: create WORD MEANING - Create a new word with its meaning",
+    "find" => "Usage: find KEYWORD - Search word by keyword",
+    "delete" => "Usage: delete WORD - Set WORD deteletd to true",
+    "update" => "Usage: update WORD NEW_MEANING - Update the meaning of a word",
     "review" => "Usage: review WORD|-f list - increase reviews for given word or last listed ones",
     "list" => <<-EOF,
 Usage: list [OPTIONS]
   Options:
-    N|-a   - Number of words / All of the words
+    N      - Number of words
     -r     - Random order
     -v     - List review words
-    -f     - From bin, words or impt
   EOF
-    "undo" => "Usage: undo - Undo last command",
-    "redo" => "Usage: redo - Redo last undo command",
+    "undo" => "Usage: undo - undo last operation",
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
   }
 
-  def initialize
-    @words = load_words(WORDS_FILE)
-    @bin_words = load_words(BIN_FILE)
-    @impt_words = load_words(IMPT_FILE)
+  def initialize()
     @history = []
-    @redo_history = []
-    @last_listed_words = []
-  end
-
-  def method_missing(name, args)
-    puts "Unknown command #{name} - #{args}. Type 'help' for a list of commands."
+    @last_listed_words = nil
   end
 
   def handle(input)
     command, *args = input.split(" ")
-    if !USAGE_DICT.key?(command.downcase)
-      puts "Command #{command.downcase} not found."
+    command = command.downcase
+    if !USAGE_DICT.key?(command)
+      puts "Command #{command} not found."
       return
     end
     options = {
       command: command,
       word: nil,
       meaning: nil,
-
       count: nil,
-      all: false,
-
       random: false,
       review: false,
-
-      from: nil,
-      cancel: false,
     }
 
     i = 0
@@ -72,16 +52,12 @@ Usage: list [OPTIONS]
         options[:random] = true
       when "-v"
         options[:review] = true
-      when "-rv" # short
+      when "-rv" # shortcut
         options[:random] = true
         options[:review] = true
-      when "-a"
-        options[:all] = true
       when "-f"
         options[:from] = args[i + 1] if args[i + 1]
         i += 1
-      when "-c"
-        options[:cancel] = true
       else
         if arg =~ /^\d+$/
           options[:count] = arg.to_i if options[:count].nil?
@@ -93,75 +69,85 @@ Usage: list [OPTIONS]
       end
       i += 1
     end
-    send(command.downcase, options)
+    return if !is_valid(options)
+    send(command, options)
   end
 
   def find(options)
-    if !options[:word]
-      puts USAGE_DICT[options[:command]]
-      return
-    end
-    prefix = options[:word]
-    words = from_to_words(options[:from])
-    words.select! { |k, v| k.include?(prefix) or v[:meaning].include?(prefix) }
+    keyword = options[:word]
+    words = Word.where("word LIKE ? OR meaning LIKE ?", "%#{keyword}%", "%#{keyword}%")
     if words.empty?
       puts "No result."
-      puts words
     else
       display_words(words)
     end
   end
 
-  def new(options)
-    move_and_log(nil, @words, options)
+  def create(options)
+    word, meaning = options[:word], options[:meaning]
+    new_word = Word.new(word: word, meaning: meaning)
+    if new_word.save
+      puts "word created: #{word} - #{meaning}"
+      @history << options
+    else
+      puts "word #{word} already exists"
+    end
   end
 
-  def remove(options)
-    move_and_log(@words, @bin_words, options)
+  def delete(options)
+    word = options[:word]
+    word_record = Word.find_by(word: word, deleted: false)
+    if word_record
+      word_record.update(deleted: true)
+      puts "word deleted: #{word}"
+      @history << options
+    else
+      puts "word #{word} doesn't exist or have been deleted"
+    end
   end
 
   def update(options)
-    if !(options[:word] && options[:meaning])
-      puts USAGE_DICT["update"]
-      return
-    end
+    word = options[:word]
+    new_meaning = options[:meaning]
 
-    if options[:cancel] # undo new meaning
-      @words.delete(options[:word])
-    end
-    # if !options[:cancel] && !@bin_words[options[:word]].nil? # overwrite, cannot undo!
-    #   @bin_words.delete(options[:word])
-    # end
-    # update 旧数据丢入bin
-    # bin 如果已存在将会覆盖，并且无法用undo复原！
-    move_and_log(@words, @bin_words, options)
-    if !options[:cancel] # new meaning
-      @words[options[:word]] = { meaning: options[:meaning], timestamp: Time.now, last_review: Time.now, review: @bin_words[options[:word]][:review] }
+    word_record = Word.find_by(word: word, deleted: false)
+    old_meaning = word_record.meaning
+    word_record.meaning = new_meaning
+    if word_record.save
+      puts "word updated: #{word.word}"
+      options[:meaning] = old_meaning
+      @history << options
+    else
+      puts "word #{word} doesn't exist or have been deleted"
     end
   end
 
   def list(options)
-    if options[:count].nil? ^ options[:all]
-      puts USAGE_DICT["list"]
-      return
-    end
-    words = from_to_words(options[:from])
-    words = words.filter {
-      |k, v|
-      get_days_until_review(v) <= 0 && (Time.now - v[:last_review]) > SHORT_TERM_REVIEW_THRESHOLD
-    } if options[:review]
-    if options[:random]
-      words = words.to_a.sample(options[:count])
-    else
-      words = words.sort_by { |k, v| -v[:timestamp].to_i }
-      words = words.first(options[:count]) if options[:count]
-    end
-    @last_listed_words = words.map { |k| k[0] }
+    words = Word.where(deleted: false)
+    words = words.where("DATEDIFF(NOW(), created_at) > POW(2, review_count)") if options[:review]
+    words = words.order(options[:random] ? "RAND()" : "created_at DESC")
+    words = words.limit(options[:count]) if options[:count]
+    @last_listed_words = words
     display_words(words)
   end
 
-  def mark(options)
-    move_and_log(@words, @impt_words, options)
+  def review(options)
+    if options[:word] == "list"
+      words = @last_listed_words
+      options[:meaning] = @last_listed_words
+    else
+      word = Word.find_by(word: options[:word], deleted: false)
+      words = word ? [word] : []
+    end
+
+    words.each do |word|
+      word.increment(:review_count)
+      if word.save
+        puts "reviewed #{word.word}"
+      else
+        puts "word #{word.word} not found"
+      end
+    end
   end
 
   def help(options)
@@ -182,167 +168,71 @@ Usage: list [OPTIONS]
 
   def undo(options)
     return if @history.empty?
-    last_command = @history.pop
-    @redo_history.push(last_command.dup)
-    last_command[:cancel] = !last_command[:cancel]
-    send(last_command[:command], last_command)
-    @history.pop if @history.last == last_command # remove duplicate history
-  end
-
-  def redo(options)
-    return if @redo_history.empty?
-    last_undo = @redo_history.pop
-    send(last_undo[:command], last_undo)
-  end
-
-  def review(options)
-    if !options[:word].nil? ^ options[:from].nil?
-      puts USAGE_DICT["review"]
-      return
-    end
-    if options[:from].nil?
-      words = [options[:word]]
-    elsif options[:from] == "list"
-      return if @last_listed_words.nil?
-      words = @last_listed_words
-      @last_listed_words = nil
-    else
-      puts "Unkown argument: -f #{options[:from]}"
-      return
-    end
-    words.each do |word|
-      if @words.key?(word)
-        @words[word][:review] += options[:cancel] ? -1 : 1
-        @words[word][:review] = @words[word][:review] < 0 ? 0 : @words[word][:review]
-        @words[word][:last_review] = Time.now
-        puts "Reviewed: #{word}, total reviews: #{@words[word][:review]}"
-      else
-        puts "Word not found: #{word}"
+    last_opt = @history.pop
+    case last_opt[:command]
+    when "create"
+      word_to_undo = Word.find_by(word: last_opt[:word], meaning: last_opt[:meaning], deleted: false)
+      if word_to_undo
+        word_to_undo.destroy
+        puts "Undone creation of '#{word_to_undo.word}'."
       end
+    when "delete"
+      word_to_undo = Word.find_by(word: last_opt[:word], deleted: true)
+      word_to_undo.deleted = false
+      if word_to_undo.save
+        puts "Undone deletion of '#{word_to_undo.word}'."
+      end
+    when "update"
+      word_to_undo = Word.find_by(word: last_opt[:word], deleted: false)
+      word_to_undo.meaning = last_opt[:meaning]
+      if word_to_undo.save
+        puts "Undone update of '#{word_to_undo.word}'."
+      end
+    when "review"
+      if last_opt[:word] != "list"
+        word_to_undo = Word.find_by(word: last_opt[:word], deleted: false)
+        word_to_undo.decrement(review_count)
+        word_to_undo.save
+      else
+        last_opt[:meaning].each do |word|
+          word.decrement(review_count)
+          word.save
+        end
+      end
+      puts "Undone review"
     end
-    file_do(:overwrite, WORDS_FILE)
-    @history.push(options: options.dup)
   end
 
   private
 
-  def move_and_log(from, to, options)
-    command = options[:command]
-    if !options[:word]
-      puts USAGE_DICT[options[:command]]
-      return
+  def is_valid(options)
+    cmd = options[:command]
+    case cmd
+    when "create", "update"
+      return true if options[:word] && options[:meaning]
+    when "delete", "find", "review"
+      return true if options[:word]
+    else # "list", "quit"
+      return true
     end
-    word = options[:word]
-
-    action, from, to = options[:cancel] ? ["Restored", to, from] : ["Applied", from, to]
-    if move(from, to, options)
-      if options[:cancel] && to.nil? # add -c
-        puts "#{action} #{command}: #{word} - #{options[:meaning]}"
-      else
-        puts "#{action} #{command}: #{word} - #{to[word][:meaning]}"
-      end
-    end
-    @history.push(options.dup)
-  end
-
-  def move(from, to, options)
-    word = options[:word]
-    if !from.nil? && !from.key?(word)
-      puts "Word not found in #{from == @words ? "words" : from == @bin_words ? "bin" : "important"}: #{word}"
-      return false
-    end
-    if !to.nil? && to.key?(word)
-      puts "Word #{word} already exists in #{to == @words ? "words" : to == @bin_words ? "bin" : "important"} with meaning #{to[word][:meaning]}"
-      return false
-    end
-
-    if !(from.nil? || to.nil?) # remove, mark, update
-      to[word] = from[word]
-      from.delete(word)
-    elsif from.nil? # new
-      if options[:meaning].nil?
-        puts USAGE_DICT["new"]
-        return false
-      end
-      to[word] = { meaning: options[:meaning], timestamp: Time.now, last_review: Time.now, review: 0 }
-    elsif to.nil? # new -c
-      from.delete(word)
-    else
-      puts "Tried to move from nil to nil"
-      return false
-    end
-    file_do(:push, to == @words ? WORDS_FILE : to == @bin_words ? BIN_FILE : IMPT_FILE, word) if !to.nil?
-    file_do(:overwrite, from == @words ? WORDS_FILE : from == @bin_words ? BIN_FILE : IMPT_FILE) if !from.nil?
-    return true
-  end
-
-  def file_do(operation, file_path, word = nil)
-    words = case file_path
-      when WORDS_FILE
-        @words
-      when BIN_FILE
-        @bin_words
-      when IMPT_FILE
-        @impt_words
-      else
-        raise "Unknown file path: #{file_path}"
-      end
-
-    case operation
-    when :push
-      File.open(file_path, "a:UTF-8") do |file|
-        file.puts([word, words[word][:meaning], words[word][:timestamp], words[word][:last_review], words[word][:review]].join(DELIMITER))
-      end
-    when :overwrite
-      File.open(file_path, "w:UTF-8") do |file|
-        words.each do |k, v|
-          file.puts([k, v[:meaning], v[:timestamp], v[:last_review], v[:review]].join(DELIMITER))
-        end
-      end
-    end
-  end
-
-  def load_words(file_path)
-    return {} unless File.exist?(file_path)
-    dict = {}
-    File.open(file_path, "r:UTF-8") do |file|
-      file.each_line do |line|
-        word, meaning, timestamp, last_review, review = line.chomp.split(DELIMITER)
-        dict[word] = { meaning: meaning, timestamp: Time.parse(timestamp), last_review: Time.parse(last_review), review: review.to_i }
-      end
-    end
-    dict
+    puts USAGE_DICT[cmd]
+    return false
   end
 
   def display_words(words)
-    if words.nil?
-      return
-    end
-    max_len = words.map { |k| k[0].length }.max
-    words.each do |k, v|
-      padding = "  " * [0, max_len - k.length].max
-      days_until_review = get_days_until_review(v)
+    return if words.nil? || words.empty?
+
+    max_len = words.map { |line| line.word.length }.max
+    words.each do |line|
+      padding = "  " * [0, max_len - line.word.length].max
+      days_until_review = get_days_until_review(line)
       days_until_review = days_until_review < 0 ? 0 : days_until_review
       days_text = days_until_review <= 1 ? "day" : "days"
-      puts "#{k}#{padding} - #{v[:meaning]} - #{days_until_review} #{days_text}"
+      puts "#{line.word}#{padding} - #{line.meaning} - #{days_until_review} #{days_text} - #{line.review_count}"
     end
   end
 
   def get_days_until_review(v)
-    return (2 ** v[:review]) - ((Time.now - v[:timestamp]) / 86400).to_i
-  end
-
-  def from_to_words(from)
-    words = case from
-      when nil
-        @words
-      when "bin"
-        @bin_words
-      when "impt"
-        @impt_words
-      else
-        raise "Unknown file path: #{from}"
-      end
-    return words.dup
+    return (2 ** v.review_count) - ((Time.now - v.created_at) / 86400).to_i
   end
 end
