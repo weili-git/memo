@@ -85,12 +85,15 @@ Usage: list [OPTIONS]
 
   def create(options)
     word, meaning = options[:word], options[:meaning]
+    word_record = Word.find_by(word: word, deleted: false)
+    if word_record
+      puts "word #{word} already exists"
+      return
+    end
     new_word = Word.new(word: word, meaning: meaning)
     if new_word.save
       puts "word created: #{word} - #{meaning}"
       @history << options
-    else
-      puts "word #{word} already exists"
     end
   end
 
@@ -107,18 +110,18 @@ Usage: list [OPTIONS]
   end
 
   def update(options)
-    word = options[:word]
-    new_meaning = options[:meaning]
-
+    word, new_meaning = options[:word], options[:meaning]
     word_record = Word.find_by(word: word, deleted: false)
+    if word_record.nil?
+      puts "word #{word} doesn't exist or have been deleted"
+      return
+    end
     old_meaning = word_record.meaning
     word_record.meaning = new_meaning
     if word_record.save
-      puts "word updated: #{word.word}"
+      puts "word updated: #{word}"
       options[:meaning] = old_meaning
       @history << options
-    else
-      puts "word #{word} doesn't exist or have been deleted"
     end
   end
 
@@ -167,7 +170,10 @@ Usage: list [OPTIONS]
   end
 
   def undo(options)
-    return if @history.empty?
+    if @history.empty?
+      puts "No operation to undo."
+      return
+    end
     last_opt = @history.pop
     case last_opt[:command]
     when "create"

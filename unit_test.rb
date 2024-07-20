@@ -1,120 +1,108 @@
 # spec/word_book_spec.rb
 require "rspec"
 require_relative "word_book"
+require_relative "db/model"
 
 RSpec.describe WordBook do
   before(:each) do
-    # 创建临时文件用于测试
-    @words_file = "spec/words_test.txt"
-    @bin_file = "spec/bin_test.txt"
-    @impt_file = "spec/impt_test.txt"
-    time_now = Time.now.iso8601
-    content = <<~DOC
-      hello|world|#{time_now}|#{time_now}|0
-      hi|there|#{time_now}|#{time_now}|0
-    DOC
-    File.write(@words_file, content)
-    File.write(@bin_file, "")
-    File.write(@impt_file, "")
-
-    # 创建 WordBook 实例
     @word_book = WordBook.new
-
-    # 重写类常量用于测试
-    WordBook.send(:remove_const, :WORDS_FILE)
-    WordBook.const_set(:WORDS_FILE, @words_file)
-    WordBook.send(:remove_const, :BIN_FILE)
-    WordBook.const_set(:BIN_FILE, @bin_file)
-    WordBook.send(:remove_const, :IMPT_FILE)
-    WordBook.const_set(:IMPT_FILE, @impt_file)
-
-    # 重新加载文件
-    @word_book = WordBook.new
+    # 增加单元测试逻辑
+    Word.find_by(word: "test_word").destroy if Word.find_by(word: "test_word")
   end
 
   after(:each) do
-    # 删除测试文件
-    File.delete(@words_file) if File.exist?(@words_file)
-    File.delete(@bin_file) if File.exist?(@bin_file)
-    File.delete(@impt_file) if File.exist?(@impt_file)
+    # 清除单元测试数据
+    Word.find_by(word: "test_word").destroy if Word.find_by(word: "test_word")
   end
 
-  describe "#new" do
-    it "adds a new word with its meaning" do
-      input = "new goodbye farewell"
-      expect { @word_book.handle(input) }.to output("Applied new: goodbye - farewell\n").to_stdout
-      expect(@word_book.instance_variable_get(:@words).keys).to include("goodbye")
+  describe "#create" do
+    it "测试创建单词" do
+      @word_book.handle("create test_word test_meaning")
+      expect(Word.find_by(word: "test_word").meaning).to eq("test_meaning")
     end
 
-    it "does not add a word if it already exists" do
-      input = "new hello greeting"
-      expect { @word_book.handle(input) }.to output("Word hello already exists in words with meaning world\n").to_stdout
+    it "测试创建单词时，单词已存在" do
+      @word_book.handle("create test_word test_meaning")
+      expect { @word_book.handle("create test_word test_meaning") }.to output("word test_word already exists\n").to_stdout
+    end
+
+    it "测试创建单词时，参数不完整" do
+      @word_book.handle("create test_word")
+      expect { @word_book.handle("create test_word") }.to output("Usage: create WORD MEANING - Create a new word with its meaning\n").to_stdout
     end
   end
 
-  describe "#remove" do
-    it "removes a word and moves it to the bin" do
-      input = "remove hello"
-      expect { @word_book.handle(input) }.to output("Applied remove: hello - world\n").to_stdout
-      expect(@word_book.instance_variable_get(:@words).keys).not_to include("hello")
-      expect(@word_book.instance_variable_get(:@bin_words).keys).to include("hello")
+  describe "#find" do
+    it "测试查找单词" do
+      @word_book.handle("create test_word test_meaning")
+      expect { @word_book.handle("find test_word") }.to output("test_word - test_meaning - 1 day - 0\n").to_stdout
     end
 
-    it "restores a word from the bin" do
-      input = "remove hello"
-      @word_book.handle(input)
-      restore_options = { command: 'remove', word: "hello", cancel: true }
-      expect { @word_book.remove(restore_options) }.to output("Restored remove: hello - world\n").to_stdout
-      expect(@word_book.instance_variable_get(:@words).keys).to include("hello")
-      expect(@word_book.instance_variable_get(:@bin_words).keys).not_to include("hello")
+    it "测试查找单词时，单词不存在" do
+      expect { @word_book.handle("find test_word") }.to output("No result.\n").to_stdout
+    end
+
+    it "测试查找单词时，参数不完整" do
+      expect { @word_book.handle("find") }.to output("Usage: find KEYWORD - Search word by keyword\n").to_stdout
+    end
+  end
+
+  describe "#delete" do
+    it "测试删除单词" do
+      @word_book.handle("create test_word test_meaning")
+      @word_book.handle("delete test_word")
+      expect(Word.find_by(word: "test_word").deleted).to eq(true)
+    end
+
+    it "测试删除单词时，单词不存在" do
+      expect { @word_book.handle("delete test_word") }.to output("word test_word doesn't exist or have been deleted\n").to_stdout
+    end
+
+    it "测试删除单词时，参数不完整" do
+      expect { @word_book.handle("delete") }.to output("Usage: delete WORD - Set WORD deteletd to true\n").to_stdout
     end
   end
 
   describe "#update" do
-    it "updates the meaning of a word and moves the old one to the bin" do
-      input = "update hello greeting"
-      expect { @word_book.handle(input) }.to output("Applied update: hello - world\n").to_stdout # print old meaning - move_and_log()
-      expect(@word_book.instance_variable_get(:@words)["hello"][:meaning]).to eq("greeting")
-      expect(@word_book.instance_variable_get(:@bin_words).keys).to include("hello")
-    end
-  end
-
-  describe "#mark" do
-    it "marks a word as important" do
-      input = "mark hello"
-      expect { @word_book.handle(input) }.to output("Applied mark: hello - world\n").to_stdout
-      expect(@word_book.instance_variable_get(:@impt_words).keys).to include("hello")
-      expect(@word_book.instance_variable_get(:@words).keys).not_to include("hello")
+    it "测试更新单词" do
+      @word_book.handle("create test_word test_meaning")
+      @word_book.handle("update test_word new_test_meaning")
+      expect(Word.find_by(word: "test_word").meaning).to eq("new_test_meaning")
     end
 
-    it "unmarks a word as important" do
-      input = "mark hello"
-      @word_book.handle(input)
-      unmark_options = { command: 'mark', word: "hello", cancel: true }
-      expect { @word_book.mark(unmark_options) }.to output("Restored mark: hello - world\n").to_stdout
-      expect(@word_book.instance_variable_get(:@impt_words).keys).not_to include("hello")
-      expect(@word_book.instance_variable_get(:@words).keys).to include("hello")
+    it "测试更新单词时，单词不存在" do
+      expect { @word_book.handle("update test_word new_test_meaning") }.to output("word test_word doesn't exist or have been deleted\n").to_stdout
+    end
+
+    it "测试更新单词时，参数不完整" do
+      expect { @word_book.handle("update test_word") }.to output("Usage: update WORD NEW_MEANING - Update the meaning of a word\n").to_stdout
     end
   end
 
   describe "#list" do
-    it "lists all words if -a option is given" do
-      input = "list -a"
-      expect { @word_book.handle(input) }.to output(/hi\s+- there - 1 day\nhello\s+- world - 1 day\n/).to_stdout # 注意顺序
-    end
-
-    it "lists a specified number of words" do
-      input = "list 1"
-      expect { @word_book.handle(input) }.to output(/hi\s+- there - 1 day\n/).to_stdout
+    it "测试列出单词" do
+      @word_book.handle("create test_word test_meaning")
+      expect { @word_book.handle("list 1") }.to output("test_word - test_meaning - 1 day - 0\n").to_stdout
     end
   end
 
   describe "#undo" do
-    it "undo a add coomand" do
-      input = "new goodbye farewell"
-      expect { @word_book.handle(input) }.to output("Applied new: goodbye - farewell\n").to_stdout
-      expect { @word_book.undo(nil) }.to output("Restored new: goodbye - farewell\n").to_stdout
-      expect { @word_book.redo(nil) }.to output("Applied new: goodbye - farewell\n").to_stdout
+    it "测试撤销操作" do
+      @word_book.handle("create test_word test_meaning")
+      @word_book.handle("undo")
+      expect(Word.find_by(word: "test_word")).to eq(nil)
+    end
+
+    it "测试撤销操作时，操作记录为空" do
+      expect { @word_book.handle("undo") }.to output("No operation to undo.\n").to_stdout
+    end
+  end
+
+  describe "#help" do
+    it "测试帮助信息" do
+      for cmd in WordBook::USAGE_DICT.keys
+        expect { @word_book.handle("help #{cmd}") }.to output(WordBook::USAGE_DICT[cmd].chomp + "\n").to_stdout
+      end
     end
   end
 end
