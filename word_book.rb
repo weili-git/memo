@@ -19,6 +19,7 @@ Usage: list [OPTIONS]
     -v     - List review words
   EOF
     "undo" => "Usage: undo - undo last operation",
+    "export" => "Usage: export PATH - export the word book to a file",
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
   }
@@ -209,6 +210,31 @@ Usage: list [OPTIONS]
     end
   end
 
+  def export(options)
+    path = options[:word]
+    words = Word.all
+    File.open(path, "w+") do |f|
+      words.each do |word|
+        f.puts "#{word.word}|#{word.meaning}|#{word.created_at}|#{word.last_reviewed_at}|#{word.review_count}|#{word.deleted}"
+      end
+    end
+  end
+
+  def import(options) # not tested yet
+    path = options[:word]
+    existing_word = Word.pluck(:word)
+    data = []
+    File.open(path, "r") do |f|
+      f.each_line do |line|
+        word, meaning, created_at, last_reviewed_at, review_count, deleted = line.split("|")
+        unless existing_word.include?(word)
+          data << {word: word,meaning: meaning,created_at: created_at,last_reviewed_at: last_reviewed_at,review_count: review_count,deleted: deleted}
+        end
+      end
+      Word.insert_all(data)
+    end
+  end
+
   private
 
   def is_valid(options)
@@ -216,7 +242,7 @@ Usage: list [OPTIONS]
     case cmd
     when "create", "update"
       return true if options[:word] && options[:meaning]
-    when "delete", "find", "review"
+    when "delete", "find", "review", "export"
       return true if options[:word]
     else # "list", "quit"
       return true
