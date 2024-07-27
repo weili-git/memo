@@ -20,6 +20,7 @@ Usage: list [OPTIONS]
   EOF
     "undo" => "Usage: undo - undo last operation",
     "export" => "Usage: export PATH - export the word book to a file",
+    "import" => "Usage: import PATH - import the word book from a file",
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
   }
@@ -228,7 +229,7 @@ Usage: list [OPTIONS]
       f.each_line do |line|
         word, meaning, created_at, last_reviewed_at, review_count, deleted = line.split("|")
         unless existing_word.include?(word)
-          data << {word: word,meaning: meaning,created_at: created_at,last_reviewed_at: last_reviewed_at,review_count: review_count,deleted: deleted}
+          data << { word: word, meaning: meaning, created_at: created_at, last_reviewed_at: last_reviewed_at, review_count: review_count, deleted: deleted }
         end
       end
       Word.insert_all(data)
@@ -242,7 +243,7 @@ Usage: list [OPTIONS]
     case cmd
     when "create", "update"
       return true if options[:word] && options[:meaning]
-    when "delete", "find", "review", "export"
+    when "delete", "find", "review", "export", "import"
       return true if options[:word]
     else # "list", "quit"
       return true
