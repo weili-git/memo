@@ -1,6 +1,7 @@
 # encoding: UTF-8
 
 require "time"
+require "zlib"
 require_relative "db/db_config"
 require_relative "db/model"
 
@@ -214,9 +215,9 @@ Usage: list [OPTIONS]
   def export(options)
     path = options[:word]
     words = Word.all
-    File.open(path, "w+") do |f|
+    Zlib::GzipWriter.open(path) do |gz|
       words.each do |word|
-        f.puts "#{word.word}|#{word.meaning}|#{word.created_at}|#{word.last_reviewed_at}|#{word.review_count}|#{word.deleted}"
+        gz.puts "#{word.word}|#{word.meaning}|#{word.created_at}|#{word.last_reviewed_at}|#{word.review_count}|#{word.deleted}"
       end
     end
   end
@@ -225,9 +226,9 @@ Usage: list [OPTIONS]
     path = options[:word]
     existing_word = Word.pluck(:word)
     data = []
-    File.open(path, "r") do |f|
+    Zlib::GzipReader.open(path) do |f|
       f.each_line do |line|
-        word, meaning, created_at, last_reviewed_at, review_count, deleted = line.split("|")
+        word, meaning, created_at, last_reviewed_at, review_count, deleted = line.chomp.split("|")
         unless existing_word.include?(word)
           data << { word: word, meaning: meaning, created_at: created_at, last_reviewed_at: last_reviewed_at, review_count: review_count, deleted: deleted }
         end
