@@ -22,6 +22,7 @@ Usage: list [OPTIONS]
     "undo" => "Usage: undo - undo last operation",
     "export" => "Usage: export PATH - export the word book to a file",
     "import" => "Usage: import PATH - import the word book from a file",
+    "trend" => "Usage: trend create|review - display trend of word creation or review",
     "help" => "Usage: help [COMMAND] - Show help for commands",
     "quit" => "Usage: quit - Exit the program",
   }
@@ -234,6 +235,34 @@ Usage: list [OPTIONS]
         end
       end
       Word.insert_all(data)
+    end
+  end
+
+  def trend(options)
+    from = options[:word]
+    case from
+    when "create"
+      words = Word.where(deleted: false)
+      # default value is 0
+      count_dict = Hash.new(0)
+      words.map do |word|
+        count_dict[word.created_at.to_date] += 1
+      end
+    when "review"
+      words = Word.where("deleted = false AND last_reviewed_at != created_at")
+      # default value is 0
+      count_dict = Hash.new(0)
+      words.map do |word|
+        count_dict[word.last_reviewed_at.to_date] += 1
+      end
+    else
+      puts "Invalid arguments for trend command"
+      return
+    end
+
+    sorted = count_dict.sort_by{|key, value| key}
+    sorted.each do |key, value|
+      puts "#{key}:" + "=" * value + "(#{value})"
     end
   end
 
