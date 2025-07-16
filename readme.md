@@ -22,3 +22,6 @@ ruby app.rb
 
 ## 3. Todo
 * Support space and newline in the meaning argument
+
+## 4. Note
+* For web app version, you can check here https://github.com/weili-git/memo_plus
